@@ -1,0 +1,11 @@
+RewriteEngine On
+
+# Tắt hiển thị thư mục
+Options -Indexes
+
+# Nếu là file thật (CSS, JS, ảnh...) → phục vụ trực tiếp
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# Tất cả request khác → chuyển về public/index.php
+RewriteRule ^(.*)$ public/index.php?url=$1 [QSA,L]
