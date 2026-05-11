@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
 class NoteController extends Controller
 {
@@ -105,8 +106,24 @@ class NoteController extends Controller
     // ─── API: KHÓA (Better Approach) ──────────────────────────────
     public function setLock(Request $request)
     {
-        $data = $request->json()->all();
-        $note = Note::findOrFail($data['id'] ?? 0);
+        $validator = Validator::make($request->all(), [
+            'id' => ['required', 'integer', 'exists:notes,id'],
+            'password' => ['required', 'string', 'min:4'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $data = $validator->validated();
+        $note = Note::findOrFail($data['id']);
+
+        if ($note->checkAccess(Auth::id()) !== 'owner') {
+            return response()->json(['error' => 'Chỉ chủ sở hữu mới có thể khóa ghi chú'], 403);
+        }
+
         $note->lock_password = $data['password']; // mutator tự hash
         $note->save();
         return response()->json(['success' => true]);
@@ -114,11 +131,26 @@ class NoteController extends Controller
 
     public function removeLock(Request $request)
     {
-        $data = $request->json()->all();
-        $note = Note::findOrFail($data['id'] ?? 0);
+        $validator = Validator::make($request->all(), [
+            'id' => ['required', 'integer', 'exists:notes,id'],
+            'current_password' => ['required', 'string'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
 
-        if (!$note->verifyLock($data['current_password'] ?? '')) {
-            return response()->json(['error' => 'Mật khẩu hiện tại không đúng']);
+        $data = $validator->validated();
+        $note = Note::findOrFail($data['id']);
+
+        if ($note->checkAccess(Auth::id()) !== 'owner') {
+            return response()->json(['error' => 'Chỉ chủ sở hữu mới có thể gỡ khóa ghi chú'], 403);
+        }
+
+        if (!$note->verifyLock($data['current_password'])) {
+            return response()->json(['error' => 'Mật khẩu hiện tại không đúng'], 422);
         }
 
         $note->update(['lock_password' => null]);
@@ -128,14 +160,30 @@ class NoteController extends Controller
 
     public function verifyLock(Request $request)
     {
-        $data = $request->json()->all();
-        $note = Note::findOrFail($data['id'] ?? 0);
+        $validator = Validator::make($request->all(), [
+            'id' => ['required', 'integer', 'exists:notes,id'],
+            'password' => ['required', 'string'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
 
-        if ($note->verifyLock($data['password'] ?? '')) {
+        $data = $validator->validated();
+        $note = Note::findOrFail($data['id']);
+        $access = $note->checkAccess(Auth::id());
+
+        if (!$access) {
+            return response()->json(['error' => 'Không có quyền truy cập'], 403);
+        }
+
+        if ($note->verifyLock($data['password'])) {
             session(["unlocked_notes.{$note->id}" => true]);
             return response()->json(['success' => true]);
         }
-        return response()->json(['error' => 'Mật khẩu không đúng']);
+        return response()->json(['error' => 'Mật khẩu không đúng'], 422);
     }
 
     // ─── API: UPLOAD ẢNH ──────────────────────────────────────────
@@ -164,17 +212,33 @@ class NoteController extends Controller
     // ─── API: CHIA SẺ ─────────────────────────────────────────────
     public function share(Request $request)
     {
-        $data       = $request->json()->all();
-        $note       = Note::findOrFail($data['note_id'] ?? 0);
-        $sharedUser = User::where('email', $data['email'] ?? '')->first();
+        $validator = Validator::make($request->all(), [
+            'note_id' => ['required', 'integer', 'exists:notes,id'],
+            'email' => ['required', 'email'],
+            'permission' => ['required', 'in:read,edit'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+        $data = $validator->validated();
 
-        if (!$sharedUser)                      return response()->json(['error' => 'Email không tồn tại']);
-        if ($sharedUser->id === Auth::id())    return response()->json(['error' => 'Không thể chia sẻ với chính mình']);
+        $note = Note::findOrFail($data['note_id']);
+        if ($note->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Chỉ chủ sở hữu mới có thể chia sẻ ghi chú'], 403);
+        }
 
-        NoteShare::updateOrCreate(
-            ['note_id' => $note->id, 'shared_with_id' => $sharedUser->id],
-            ['owner_id' => Auth::id(), 'permission' => $data['permission'] ?? 'read']
-        );
+        $sharedUser = User::where('email', $data['email'])->first();
+        if (!$sharedUser) {
+            return response()->json(['error' => 'Email không tồn tại'], 422);
+        }
+        if ($sharedUser->id === Auth::id()) {
+            return response()->json(['error' => 'Không thể chia sẻ với chính mình'], 422);
+        }
+
+        $this->shareNoteWithUser($note, $sharedUser, $data['permission']);
 
         return response()->json(['success' => true, 'shared_with' => $sharedUser->name]);
     }
@@ -191,16 +255,44 @@ class NoteController extends Controller
 
     public function updatePermission(Request $request)
     {
-        $data  = $request->json()->all();
-        $share = NoteShare::findOrFail($data['share_id'] ?? 0);
-        $share->update(['permission' => $data['permission'] ?? 'read']);
+        $validator = Validator::make($request->all(), [
+            'share_id' => ['required', 'integer', 'exists:note_shares,id'],
+            'permission' => ['required', 'in:read,edit'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+        $data = $validator->validated();
+
+        $share = NoteShare::with('note')->findOrFail($data['share_id']);
+        if ($share->note->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Không có quyền cập nhật chia sẻ'], 403);
+        }
+
+        $share->update(['permission' => $data['permission']]);
         return response()->json(['success' => true]);
     }
 
     public function revokeShare($shareId)
     {
-        NoteShare::findOrFail($shareId)->delete();
+        $share = NoteShare::with('note')->findOrFail($shareId);
+        if ($share->note->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Không có quyền gỡ chia sẻ'], 403);
+        }
+
+        $share->delete();
         return response()->json(['success' => true]);
+    }
+
+    private function shareNoteWithUser(Note $note, User $sharedUser, string $permission): void
+    {
+        NoteShare::updateOrCreate(
+            ['note_id' => $note->id, 'shared_with_id' => $sharedUser->id],
+            ['owner_id' => Auth::id(), 'permission' => $permission]
+        );
     }
 
     // ─── API: NHÃN ────────────────────────────────────────────────

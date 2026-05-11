@@ -6,8 +6,11 @@ let currentNoteId = null;
 let autoSaveTimer  = null;
 let searchTimer    = null;
 let notesRefreshTimer = null;
+let keepCurrentNoteOnModalClose = false;
+const unlockedByPasswordNoteIds = new Set();
 const AUTO_SAVE_DELAY = 1000;
 const SEARCH_DELAY    = 300;
+const IS_SHARED_NOTES_PAGE = window.location.pathname.includes('/notes/shared');
 
 // Bootstrap Modal instances
 let noteModalBs, lockModalBs, verifyLockModalBs, shareModalBs, labelsModalBs, deleteConfirmModalBs;
@@ -197,9 +200,14 @@ function openNote(id) {
     .then(r => r.json())
     .then(data => {
         if (data.error) { alert(data.error); return; }
-        if (data.locked) { openVerifyLock(id); return; }
+        if (data.locked) {
+            unlockedByPasswordNoteIds.delete(id);
+            openVerifyLock(id);
+            return;
+        }
 
         currentNoteId = id;
+        if (!data.has_lock) unlockedByPasswordNoteIds.delete(id);
         document.getElementById('noteTitle').value   = data.title   || '';
         document.getElementById('noteContent').value = data.content || '';
 
@@ -288,6 +296,11 @@ function initNoteEditor() {
     // Xử lý khi đóng Modal: Kiểm tra nếu trống thì xóa
     if (noteModalEl) {
         noteModalEl.addEventListener('hidden.bs.modal', function () {
+        if (keepCurrentNoteOnModalClose) {
+            keepCurrentNoteOnModalClose = false;
+            return;
+        }
+
         const t = document.getElementById('noteTitle').value.trim();
         const c = document.getElementById('noteContent').value.trim();
         const imagesCount = document.getElementById('noteImages') ? document.getElementById('noteImages').children.length : 0;
@@ -355,6 +368,7 @@ function autoSaveNote() {
 }
 
 function refreshNotesList(delay = 100) {
+    if (IS_SHARED_NOTES_PAGE) return;
     const searchInput = document.getElementById('searchInput');
     const keyword = searchInput ? searchInput.value.trim() : '';
     clearTimeout(notesRefreshTimer);
@@ -474,37 +488,75 @@ function initLockModal() {
     const btnConfirm = document.getElementById('btnConfirmLock');
     const btnRemove  = document.getElementById('btnRemoveLock');
     const btnVerify  = document.getElementById('btnVerifyLock');
+    const btnUnlockFromLockModal = document.getElementById('btnUnlockFromLockModal');
 
     if (btnLock) btnLock.addEventListener('click', openLockModal);
     if (btnConfirm) btnConfirm.addEventListener('click', confirmLock);
     if (btnRemove) btnRemove.addEventListener('click', removeLock);
     if (btnVerify) btnVerify.addEventListener('click', verifyLock);
+    if (btnUnlockFromLockModal) btnUnlockFromLockModal.addEventListener('click', unlockFromLockModal);
 }
 
 function openLockModal() {
+    if (!currentNoteId) {
+        showErr('lockErrorMsg', '⚠ Không tìm thấy ghi chú để khóa');
+        return;
+    }
+
     const lockIcon  = document.getElementById('lockIcon');
     const title     = document.getElementById('lockModalTitle');
+    const setLockSection = document.getElementById('setLockSection');
+    const unlockSection = document.getElementById('unlockSection');
     const removeSection = document.getElementById('removeLockSection');
-    const btnConfirm    = document.getElementById('btnConfirmLock');
 
     document.getElementById('lockPassword').value = '';
     document.getElementById('lockPasswordConfirm').value = '';
+    const unlockInput = document.getElementById('unlockPassword');
+    if (unlockInput) unlockInput.value = '';
     hideErr('lockErrorMsg');
+    hideErr('unlockErrorMsg');
 
     const isLocked = lockIcon && lockIcon.className.includes('lock-fill');
     if (isLocked) {
-        title.textContent = 'Đổi / Gỡ mật khẩu';
-        btnConfirm.textContent = 'Đổi mật khẩu';
-        removeSection.style.display = 'block';
-        document.getElementById('currentLockPassword').value = '';
-        hideErr('removeLockErrorMsg');
+        title.textContent = 'Mở khóa ghi chú';
+        if (setLockSection) setLockSection.style.display = 'none';
+        if (unlockSection) unlockSection.style.display = 'block';
+        removeSection.style.display = 'none';
     } else {
         title.textContent = 'Khóa ghi chú';
-        btnConfirm.textContent = 'Đặt khóa';
+        if (setLockSection) setLockSection.style.display = 'block';
+        if (unlockSection) unlockSection.style.display = 'none';
         removeSection.style.display = 'none';
     }
+    keepCurrentNoteOnModalClose = true;
     noteModalBs.hide();
     lockModalBs.show();
+}
+
+function unlockFromLockModal() {
+    const pwd = document.getElementById('unlockPassword').value;
+    if (!pwd) {
+        showErr('unlockErrorMsg', '⚠ Vui lòng nhập mật khẩu');
+        return;
+    }
+    hideErr('unlockErrorMsg');
+
+    fetch(BASE_URL + '/notes/removeLock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+        body: JSON.stringify({ id: currentNoteId, current_password: pwd })
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            unlockedByPasswordNoteIds.delete(currentNoteId);
+            const icon = document.getElementById('lockIcon');
+            if (icon) icon.className = 'bi bi-unlock';
+            lockModalBs.hide();
+            showToast('🔓 Đã gỡ khóa ghi chú thành công');
+            if (noteModalBs) noteModalBs.show();
+        } else {
+            showErr('unlockErrorMsg', '✗ ' + (data.error || 'Không thể gỡ khóa'));
+        }
+    });
 }
 
 function confirmLock() {
@@ -524,9 +576,12 @@ function confirmLock() {
         if (data.success) {
             const icon = document.getElementById('lockIcon');
             if (icon) icon.className = 'bi bi-lock-fill text-danger';
+            unlockedByPasswordNoteIds.delete(currentNoteId);
             lockModalBs.hide();
+            showToast('🔒 Đã khóa ghi chú thành công');
         } else {
             showErr('lockErrorMsg', '✗ ' + (data.error || 'Lỗi'));
+            showToast('❌ Không thể khóa ghi chú');
         }
     });
 }
@@ -544,9 +599,12 @@ function removeLock() {
         if (data.success) {
             const icon = document.getElementById('lockIcon');
             if (icon) icon.className = 'bi bi-unlock';
+            unlockedByPasswordNoteIds.delete(currentNoteId);
             lockModalBs.hide();
+            showToast('🔓 Đã gỡ khóa ghi chú thành công');
         } else {
             showErr('removeLockErrorMsg', '✗ ' + (data.error || 'Mật khẩu không đúng'));
+            showToast('❌ Không thể gỡ khóa ghi chú');
         }
     });
 }
@@ -565,7 +623,12 @@ function verifyLock() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
         body: JSON.stringify({ id: currentNoteId, password: pwd })
     }).then(r => r.json()).then(data => {
-        if (data.success) { verifyLockModalBs.hide(); openNote(currentNoteId); }
+        if (data.success) {
+            unlockedByPasswordNoteIds.add(currentNoteId);
+            verifyLockModalBs.hide();
+            showToast('🔓 Mở khóa ghi chú thành công');
+            openNote(currentNoteId);
+        }
         else alert('Mật khẩu không đúng');
     });
 }
@@ -581,9 +644,15 @@ function initShareModal() {
 }
 
 function openShareModal() {
+    if (!currentNoteId) {
+        showToast('⚠ Không tìm thấy ghi chú để chia sẻ. Vui lòng mở lại ghi chú.');
+        return;
+    }
+
     document.getElementById('shareEmail').value = '';
     document.getElementById('shareMsg').innerHTML = '';
     loadShareList();
+    keepCurrentNoteOnModalClose = true;
     noteModalBs.hide();
     shareModalBs.show();
 }
@@ -614,15 +683,33 @@ function confirmShare() {
 
     fetch(BASE_URL + '/notes/share', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': csrfToken()
+        },
         body: JSON.stringify({ note_id: currentNoteId, email, permission: perm })
-    }).then(r => r.json()).then(data => {
-        if (data.success) {
-            msg.innerHTML = `<div class="alert alert-success py-1 small">✓ Đã chia sẻ với ${escHtml(data.shared_with)}</div>`;
+    })
+    .then(async r => {
+        const contentType = r.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+            ? await r.json()
+            : { error: 'Máy chủ trả về dữ liệu không hợp lệ' };
+        return { ok: r.ok, data };
+    })
+    .then(({ ok, data }) => {
+        if (ok && data.success) {
+            const sharedWith = escHtml(data.shared_with || email);
+            msg.innerHTML = `<div class="alert alert-success py-1 small">✓ Đã chia sẻ với ${sharedWith}</div>`;
+            showToast(`✅ Chia sẻ ghi chú thành công với ${sharedWith}`);
+            document.getElementById('shareEmail').value = '';
             loadShareList();
         } else {
-            msg.innerHTML = `<div class="alert alert-danger py-1 small">✗ ${escHtml(data.error)}</div>`;
+            msg.innerHTML = `<div class="alert alert-danger py-1 small">✗ ${escHtml(data.error || 'Không thể chia sẻ ghi chú')}</div>`;
         }
+    })
+    .catch(() => {
+        msg.innerHTML = '<div class="alert alert-danger py-1 small">✗ Không thể kết nối máy chủ</div>';
     });
 }
 

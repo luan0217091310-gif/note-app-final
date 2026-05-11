@@ -6,9 +6,9 @@
     <h5 class="fw-bold mb-0"><i class="bi bi-share me-2 text-primary"></i>Ghi chú được chia sẻ với tôi</h5>
 </div>
 
-<div class="row g-3">
+<div class="row g-3" id="notesContainer">
     @forelse($shared as $share)
-    <div class="col-sm-6 col-md-4 col-lg-3">
+    <div class="col-sm-6 col-md-4 col-lg-3 note-col" data-id="{{ $share->note->id }}">
         <div class="card h-100 shadow-sm border-0 note-card" style="cursor:pointer" onclick="openNote({{ $share->note->id }})">
             <div class="card-body">
                 <div class="d-flex gap-1 mb-2">
@@ -39,4 +39,5 @@
     </div>
     @endforelse
 </div>
+@include('notes.partials.editor-modals')
 @endsection
