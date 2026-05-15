@@ -1,10 +1,10 @@
-# 📝 Note Management Application — Laravel 12
+#  Note Management Application — Laravel 12
 
 Dự án cuối khóa môn **Web Programming & Applications (503073)**. Ứng dụng quản lý ghi chú hiện đại với khả năng cộng tác thời gian thực, chế độ ngoại tuyến (PWA) và bảo mật cao.
 
 ---
 
-## 🌟 Tính năng chính (28 Tiêu chí chấm điểm)
+##  Tính năng chính (28 Tiêu chí chấm điểm)
 
 Ứng dụng đáp ứng đầy đủ các yêu cầu từ đề bài:
 
@@ -98,7 +98,7 @@ Mở trình duyệt: `http://localhost/note-app-final/public/`
 
 ---
 
-## 🔑 Tài khoản Demo
+##  Tài khoản Demo
 
 | Email                 | Mật khẩu | Vai trò        |
 | --------------------- | ---------- | --------------- |
