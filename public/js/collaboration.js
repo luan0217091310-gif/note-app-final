@@ -14,7 +14,7 @@ function initCollaboration(noteId) {
 
     // Kết nối WebSocket server
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = wsProtocol + '//' + window.location.hostname + ':8081';
+    const wsUrl = wsProtocol + '//' + window.location.hostname + ':8080';
 
     try {
         wsConnection = new WebSocket(wsUrl);

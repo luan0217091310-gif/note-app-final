@@ -57,6 +57,17 @@
 
     {{-- Right --}}
     <div class="d-flex align-items-center gap-2">
+        {{-- View Toggle (chỉ hiện ở trang ghi chú) --}}
+        @if(request()->routeIs('notes.index') || request()->routeIs('notes.shared'))
+        <div class="btn-group" role="group" title="Kiểu hiển thị" id="viewToggleGroup">
+            <button type="button" class="btn btn-sm btn-outline-secondary active" id="btnViewGrid" onclick="setView('grid')" title="Dạng lưới">
+                <i class="bi bi-grid-3x3-gap-fill"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btnViewList" onclick="setView('list')" title="Dạng danh sách">
+                <i class="bi bi-list-ul"></i>
+            </button>
+        </div>
+        @endif
         <button class="btn btn-sm btn-outline-secondary" id="themeToggle" title="Đổi giao diện">
             <i class="bi bi-sun-fill theme-icon-light"></i>
             <i class="bi bi-moon-fill theme-icon-dark" style="display:none"></i>

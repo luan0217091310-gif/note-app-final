@@ -181,7 +181,7 @@ class NoteController extends Controller
 
     public function sharedWithMe()
     {
-        $shared = NoteShare::with(['note', 'owner'])
+        $shared = NoteShare::with(['note.images', 'note.labels', 'owner'])
             ->where('shared_with_id', Auth::id())
             ->orderByDesc('shared_at')
             ->get();

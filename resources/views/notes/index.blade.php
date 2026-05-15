@@ -12,11 +12,6 @@
 {{-- Header --}}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="fw-bold mb-0"><i class="bi bi-journal-text me-2 text-primary"></i>Ghi chú của tôi</h5>
-    <div class="d-flex gap-2">
-        <button class="btn btn-sm btn-outline-secondary" id="viewToggle" data-view="grid" title="Đổi chế độ xem">
-            <i class="bi bi-grid-3x3-gap" id="viewIcon"></i>
-        </button>
-    </div>
 </div>
 
 {{-- Notes Container --}}
@@ -28,6 +23,13 @@
         <div class="card h-100 shadow-sm border-0 note-card {{ $note->is_pinned ? 'border-warning border' : '' }}"
              style="--note-bg:{{ auth()->user()->note_color ?? '#fff' }}; background:var(--note-bg); cursor:pointer"
              onclick="openNote({{ $note->id }})">
+            {{-- Thumbnail ảnh (nếu có) --}}
+            @if(!$note->isLocked() && $note->images->count() > 0)
+            <div style="height:160px;overflow:hidden;border-radius:0.375rem 0.375rem 0 0">
+                <img src="{{ asset('storage/' . $note->images->first()->image_path) }}"
+                     style="width:100%;height:100%;object-fit:cover" alt="">
+            </div>
+            @endif
             <div class="card-body">
                 <div class="d-flex gap-1 mb-2">
                     @if($note->is_pinned) <span class="badge bg-warning text-dark"><i class="bi bi-pin-fill"></i> Ghim</span> @endif
@@ -41,6 +43,9 @@
                     </p>
                 @else
                     <p class="card-text text-muted small"><i class="bi bi-lock"></i> Ghi chú đã được khóa</p>
+                @endif
+                @if($note->images->count() > 1)
+                <p class="text-muted small mb-1"><i class="bi bi-images me-1"></i>{{ $note->images->count() }} ảnh</p>
                 @endif
                 @if($note->labels->count() > 0)
                 <div class="d-flex flex-wrap gap-1 mt-2">

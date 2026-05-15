@@ -6,6 +6,7 @@ let currentNoteId = null;
 let autoSaveTimer  = null;
 let searchTimer    = null;
 let notesRefreshTimer = null;
+let transitioningToSubModal = false; // Flag: đang chuyển sang sub-modal (nhãn/khóa/chia sẻ)
 const AUTO_SAVE_DELAY = 1000;
 const SEARCH_DELAY    = 300;
 
@@ -127,37 +128,59 @@ function renderNotes(notes) {
     const container = document.getElementById('notesContainer');
     const viewBtn   = document.getElementById('viewToggle');
     if (!container) return;
-    
+
     if (!notes.length) {
         container.innerHTML = `<div class="col-12 text-center py-5"><i class="bi bi-search fs-1 text-muted"></i><h5 class="text-muted mt-3">Không tìm thấy ghi chú nào</h5></div>`;
         return;
     }
 
-    const isList = viewBtn && viewBtn.dataset.view === 'list';
+    const isList = currentView === 'list';
     const colClass = isList ? 'col-12 note-col' : 'col-sm-6 col-md-4 col-lg-3 note-col';
 
-    container.innerHTML = notes.map(n => `
-        <div class="${colClass}" data-id="${n.id}">
-            <div class="card h-100 shadow-sm border-0 note-card ${n.is_pinned ? 'border-warning border' : ''}" 
-                 style="cursor:pointer; --note-bg:${USER_NOTE_COLOR}; background:var(--note-bg)" 
-                 onclick="openNote(${n.id})">
-                <div class="card-body">
-                    <div class="d-flex gap-1 mb-2">
-                        ${n.is_pinned ? '<span class="badge bg-warning text-dark"><i class="bi bi-pin-fill"></i></span>' : ''}
-                        ${n.has_lock || n.lock_password_exists ? '<span class="badge bg-secondary"><i class="bi bi-lock-fill"></i></span>' : ''}
-                        ${n.shares_count > 0 ? '<span class="badge bg-info text-dark"><i class="bi bi-share-fill"></i></span>' : ''}
+    container.innerHTML = notes.map(n => {
+        const isLocked  = !!(n.has_lock || n.lock_password_exists);
+        const images    = n.images || [];
+        const firstImg  = (!isLocked && images.length > 0) ? images[0] : null;
+
+        // Thumbnail ảnh: ở trên card (grid) hoặc bên trái (list)
+        const gridThumb = (!isList && firstImg)
+            ? `<div style="height:160px;overflow:hidden;border-radius:0.375rem 0.375rem 0 0"><img src="${BASE_URL}/storage/${firstImg.image_path}" style="width:100%;height:100%;object-fit:cover" alt=""></div>`
+            : '';
+        const listThumb = (isList && firstImg)
+            ? `<img src="${BASE_URL}/storage/${firstImg.image_path}" class="rounded me-3 flex-shrink-0" style="width:68px;height:68px;object-fit:cover" alt="">`
+            : '';
+
+        const labelsHtml = (n.labels && n.labels.length)
+            ? `<div class="d-flex flex-wrap gap-1 mt-2">${n.labels.map(l => `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">${escHtml(l.name)}</span>`).join('')}</div>`
+            : '';
+
+        const imgCountHtml = (!isLocked && images.length > 1)
+            ? `<small class="text-muted"><i class="bi bi-images me-1"></i>${images.length} ảnh</small>`
+            : '';
+
+        return `<div class="${colClass}" data-id="${n.id}">
+            <div class="card shadow-sm border-0 note-card ${n.is_pinned ? 'border-warning border' : ''}" style="cursor:pointer;--note-bg:${USER_NOTE_COLOR};background:var(--note-bg)${isList ? ';height:auto' : ''}" onclick="openNote(${n.id})">
+                ${gridThumb}
+                <div class="card-body${isList ? ' d-flex align-items-center py-2' : ''}">
+                    ${listThumb}
+                    <div class="flex-grow-1 overflow-hidden">
+                        <div class="d-flex gap-1 mb-1">
+                            ${n.is_pinned ? '<span class="badge bg-warning text-dark"><i class="bi bi-pin-fill"></i></span>' : ''}
+                            ${isLocked ? '<span class="badge bg-secondary"><i class="bi bi-lock-fill"></i></span>' : ''}
+                            ${n.shares_count > 0 ? '<span class="badge bg-info text-dark"><i class="bi bi-share-fill"></i></span>' : ''}
+                        </div>
+                        <h6 class="card-title fw-semibold text-truncate mb-1">${escHtml(n.title) || 'Không có tiêu đề'}</h6>
+                        <p class="card-text text-muted small mb-1" style="display:-webkit-box;-webkit-line-clamp:${isList?1:3};-webkit-box-orient:vertical;overflow:hidden">${escHtml(n.content || '')}</p>
+                        ${imgCountHtml}
+                        ${labelsHtml}
                     </div>
-                    <h6 class="card-title fw-semibold text-truncate">${escHtml(n.title) || 'Không có tiêu đề'}</h6>
-                    <p class="card-text text-muted small" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">
-                        ${escHtml(n.content || '')}
-                    </p>
                 </div>
                 <div class="card-footer bg-transparent border-0 text-muted small">
                     <i class="bi bi-clock me-1"></i>${new Date(n.updated_at).toLocaleString('vi-VN', {hour12:false, dateStyle:'short', timeStyle:'short'})}
                 </div>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 // =============================================
@@ -171,9 +194,14 @@ function openNote(id) {
         if (data.locked) { openVerifyLock(id); return; }
 
         currentNoteId = id;
-        document.getElementById('noteTitle').value   = data.title   || '';
-        document.getElementById('noteContent').value = data.content || '';
+        const access = data.access || 'view'; // 'owner' | 'edit' | 'view'
 
+        const titleEl   = document.getElementById('noteTitle');
+        const contentEl = document.getElementById('noteContent');
+        if (titleEl)   titleEl.value   = data.title   || '';
+        if (contentEl) contentEl.value = data.content || '';
+
+        // Cập nhật icon ghim/khóa
         const pinIcon  = document.getElementById('pinIcon');
         const lockIcon = document.getElementById('lockIcon');
         if (pinIcon)  pinIcon.className  = data.is_pinned ? 'bi bi-pin-fill text-warning' : 'bi bi-pin';
@@ -182,12 +210,44 @@ function openNote(id) {
         const saveStatus = document.getElementById('saveStatus');
         if (saveStatus) saveStatus.textContent = '';
 
-        // Render ảnh
-        renderImages(data.images || []);
+        // ── Xử lý quyền truy cập ──
+        const isReadOnly = (access === 'view');
+        const isOwner    = (access === 'owner');
 
+        if (titleEl)   titleEl.readOnly   = isReadOnly;
+        if (contentEl) contentEl.readOnly = isReadOnly;
+
+        // Các nút chỉ owner mới dùng được
+        const ownerOnlyBtns = ['btnPin', 'btnLock', 'btnShare', 'btnDeleteNote'];
+        ownerOnlyBtns.forEach(btnId => {
+            const btn = document.getElementById(btnId);
+            if (btn) btn.style.display = isOwner ? '' : 'none';
+        });
+
+        // Nút upload ảnh: owner và edit được dùng, view thì không
+        const btnUpload = document.getElementById('btnUploadImg');
+        if (btnUpload) btnUpload.style.display = isReadOnly ? 'none' : '';
+
+        // Nút nhãn: chỉ owner mới gắn nhãn
+        const btnLabels = document.getElementById('btnLabels');
+        if (btnLabels) btnLabels.style.display = isOwner ? '' : 'none';
+
+        // Nút Hoàn tất: ẩn ở chế độ chỉ xem
+        const btnDone = document.getElementById('btnDone');
+        if (btnDone) btnDone.style.display = isReadOnly ? 'none' : '';
+
+        // Hiển thị nhãn trạng thái quyền
+        const saveStatusEl = document.getElementById('saveStatus');
+        if (saveStatusEl && !isOwner) {
+            saveStatusEl.textContent = access === 'edit' ? '✎ Có thể sửa' : '👁 Chỉ xem';
+            saveStatusEl.className = access === 'edit' ? 'text-success small' : 'text-secondary small';
+        }
+
+        renderImages(data.images || []);
         noteModalBs.show();
     });
 }
+
 
 document.addEventListener('DOMContentLoaded', function () {
     const btnNew = document.getElementById('btnNewNote');
@@ -259,26 +319,29 @@ function initNoteEditor() {
     // Xử lý khi đóng Modal: Kiểm tra nếu trống thì xóa
     if (noteModalEl) {
         noteModalEl.addEventListener('hidden.bs.modal', function () {
+        if (transitioningToSubModal) {
+            transitioningToSubModal = false;
+            return;
+        }
         const t = document.getElementById('noteTitle').value.trim();
         const c = document.getElementById('noteContent').value.trim();
         const imagesCount = document.getElementById('noteImages') ? document.getElementById('noteImages').children.length : 0;
+        const closingId = currentNoteId;
+        currentNoteId = null;
 
-        if (!t && !c && imagesCount === 0 && currentNoteId) {
-            // XÓA GHI CHÚ TRỐNG NGAY LẬP TỨC
-            const idToRemove = currentNoteId;
-            fetch(BASE_URL + '/notes/delete/' + idToRemove, {
+        if (!t && !c && imagesCount === 0 && closingId) {
+            fetch(BASE_URL + '/notes/delete/' + closingId, {
                 method: 'POST',
                 headers: { 'X-CSRF-TOKEN': csrfToken() }
             }).then(() => {
-                const card = document.querySelector(`.note-col[data-id="${idToRemove}"]`);
+                const card = document.querySelector(`.note-col[data-id="${closingId}"]`);
                 if (card) card.remove();
                 showToast('ℹ Đã hủy ghi chú trống');
             });
-        } else {
-            // CẬP NHẬT DANH SÁCH TỨC THÌ
-            refreshNotesList(0);
+        } else if (closingId) {
+            // Chỉ patch card tại chỗ - KHÔNG re-render toàn bộ để giữ ảnh
+            patchNoteCard(closingId, t, c);
         }
-        currentNoteId = null;
     });
     }
 
@@ -316,10 +379,11 @@ function autoSaveNote() {
     })
     .then(r => r.json())
     .then(data => {
-        if (saveStatus) saveStatus.textContent = data.success ? '✓ Đã lưu' : '✗ Lỗi';
+        if (saveStatus) saveStatus.textContent = data.success ? '\u2713 Đã lưu' : '\u2717 Lỗi';
         if (data.success) {
+            // Chỉ cập nhật card tại chỗ, KHÔNG gọi refreshNotesList
+            // để tránh DOM bị xóa và ảnh biến mất
             patchNoteCard(currentNoteId, liveTitle, liveContent);
-            refreshNotesList(200);
         }
         return !!data.success;
     });
@@ -333,27 +397,60 @@ function refreshNotesList(delay = 100) {
 }
 
 function patchNoteCard(noteId, title, content) {
-    const col = document.querySelector(`.note-col[data-id="${noteId}"]`);
-    if (!col) return;
+    // Tìm card trên toàn bộ document để chắc chắn
+    let col = document.querySelector(`.note-col[data-id="${noteId}"]`);
 
-    const titleEl = col.querySelector('.card-title');
+    if (!col) {
+        const container = document.getElementById('notesContainer');
+        if (!container) return;
+        
+        // KHÔNG tạo card mới nếu ở trang Shared (để tránh nhân bản)
+        if (window.location.pathname.includes('/shared')) return;
+
+        // Ghi chú mới (chỉ ở trang chủ): tạo card và thêm vào đầu danh sách
+        const isList  = currentView === 'list';
+        const colClass = isList ? 'col-12 note-col' : 'col-sm-6 col-md-4 col-lg-3 note-col';
+        const now = new Date();
+        const timeStr = now.toLocaleString('vi-VN', { hour12: false, dateStyle: 'short', timeStyle: 'short' });
+        col = document.createElement('div');
+        col.className = colClass;
+        col.setAttribute('data-id', noteId);
+        col.innerHTML = `
+            <div class="card shadow-sm border-0 note-card" style="cursor:pointer;--note-bg:${USER_NOTE_COLOR};background:var(--note-bg)" onclick="openNote(${noteId})">
+                <div class="card-body">
+                    <h6 class="card-title fw-semibold text-truncate mb-1">${escHtml(title) || 'Không có tiêu đề'}</h6>
+                    <p class="card-text text-muted small mb-1" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${escHtml(content || '')}</p>
+                </div>
+                <div class="card-footer bg-transparent border-0 text-muted small">
+                    <i class="bi bi-clock me-1"></i>${timeStr}
+                </div>
+            </div>`;
+        container.insertBefore(col, container.firstChild);
+        return;
+    }
+
+    // Card đã có: cập nhật tại chỗ
+    const titleEl   = col.querySelector('.card-title');
     const contentEl = col.querySelector('.card-text');
-    const footerEl = col.querySelector('.card-footer');
+    const footerEl  = col.querySelector('.card-footer');
 
-    if (titleEl) {
-        const finalTitle = (title || '').trim();
-        titleEl.textContent = finalTitle || 'Không có tiêu đề';
-    }
-
+    if (titleEl) titleEl.textContent = (title || '').trim() || 'Không có tiêu đề';
     if (contentEl) {
-        const finalContent = (content || '').trim();
-        contentEl.textContent = finalContent;
+        // Giữ lại các thành phần đặc biệt nếu có
+        const badge = contentEl.querySelector('.badge');
+        contentEl.textContent = (content || '').trim();
+        if (badge) contentEl.prepend(badge);
     }
-
-    if (footerEl) {
+    
+    // Chỉ cập nhật thời gian ở trang chủ (trang Shared hiện tên owner)
+    if (footerEl && !window.location.pathname.includes('/shared')) {
         const now = new Date();
         footerEl.innerHTML = `<i class="bi bi-clock me-1"></i>${now.toLocaleString('vi-VN', { hour12: false, dateStyle: 'short', timeStyle: 'short' })}`;
     }
+
+    // Di chuyển card lên đầu
+    const container = document.getElementById('notesContainer');
+    if (container) container.insertBefore(col, container.firstChild);
 }
 
 // =============================================
@@ -474,6 +571,7 @@ function openLockModal() {
         btnConfirm.textContent = 'Đặt khóa';
         removeSection.style.display = 'none';
     }
+    transitioningToSubModal = true;
     noteModalBs.hide();
     lockModalBs.show();
 }
@@ -555,6 +653,7 @@ function openShareModal() {
     document.getElementById('shareEmail').value = '';
     document.getElementById('shareMsg').innerHTML = '';
     loadShareList();
+    transitioningToSubModal = true;
     noteModalBs.hide();
     shareModalBs.show();
 }
@@ -609,8 +708,26 @@ function revokeShare(shareId) {
 function initLabelsModal() {
     const btnLabels = document.getElementById('btnLabels');
     const btnSave   = document.getElementById('btnSaveLabels');
-    if (btnLabels) btnLabels.addEventListener('click', () => { noteModalBs.hide(); labelsModalBs.show(); });
+    if (btnLabels) btnLabels.addEventListener('click', openLabelsModal);
     if (btnSave)   btnSave.addEventListener('click', saveLabels);
+}
+
+function openLabelsModal() {
+    if (!currentNoteId) return;
+    const savedId = currentNoteId; // Lưu lại ID trước khi fetch
+    // Tải nhãn hiện tại của note và tích sẵn
+    fetch(BASE_URL + '/notes/' + savedId, { headers: { 'X-CSRF-TOKEN': csrfToken() } })
+    .then(r => r.json())
+    .then(data => {
+        const currentLabelIds = (data.labels || []).map(l => String(l.id));
+        document.querySelectorAll('.label-checkbox').forEach(cb => {
+            cb.checked = currentLabelIds.includes(cb.value);
+        });
+        transitioningToSubModal = true; // Set flag TRƯỚC khi ẩn note modal
+        currentNoteId = savedId;        // Đảm bảo ID không bị mất
+        noteModalBs.hide();
+        labelsModalBs.show();
+    });
 }
 
 function saveLabels() {
@@ -619,7 +736,17 @@ function saveLabels() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
         body: JSON.stringify({ note_id: currentNoteId, label_ids: checked })
-    }).then(r => r.json()).then(() => labelsModalBs.hide());
+    }).then(r => r.json()).then(data => {
+        if (data.success !== false) {
+            labelsModalBs.hide();
+            // Cập nhật card nhãn tức thì
+            refreshNotesList(50);
+            // Mở lại note modal
+            setTimeout(() => {
+                if (currentNoteId) openNote(currentNoteId);
+            }, 150);
+        }
+    });
 }
 
 // =============================================
@@ -924,29 +1051,53 @@ function initAvatarAdjuster() {
 }
 
 // =============================================
-// VIEW TOGGLE (Grid / List)
+// VIEW TOGGLE (Grid / List) - Navbar buttons
 // =============================================
-function initViewToggle() {
-    const btn = document.getElementById('viewToggle');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-        const container = document.getElementById('notesContainer');
-        const icon = document.getElementById('viewIcon');
-        const isCurrentlyGrid = btn.dataset.view === 'grid';
-        
-        const newView = isCurrentlyGrid ? 'list' : 'grid';
-        btn.dataset.view = newView;
-        
-        if (icon) icon.className = newView === 'list' ? 'bi bi-list' : 'bi bi-grid-3x3-gap';
-        
-        const cols = container?.querySelectorAll('.note-col');
-        cols?.forEach(col => {
-            col.className = newView === 'list' 
-                ? 'col-12 note-col' 
-                : 'col-sm-6 col-md-4 col-lg-3 note-col';
-        });
+let currentView = 'grid'; // Trạng thái view toàn cục
+
+function setView(view) {
+    currentView = view;
+    const container = document.getElementById('notesContainer');
+    const btnGrid = document.getElementById('btnViewGrid');
+    const btnList = document.getElementById('btnViewList');
+
+    // Cập nhật trạng thái active của 2 nút
+    if (btnGrid) btnGrid.classList.toggle('active', view === 'grid');
+    if (btnList) btnList.classList.toggle('active', view === 'list');
+
+    if (!container) return;
+
+    // Áp dụng layout mới cho các card hiện có trong DOM (giữ nguyên ảnh)
+    const cols = container.querySelectorAll('.note-col');
+    cols.forEach(col => {
+        col.className = view === 'list' ? 'col-12 note-col' : 'col-sm-6 col-md-4 col-lg-3 note-col';
+        const card = col.querySelector('.card');
+        if (card) {
+            if (view === 'list') {
+                card.style.height = 'auto';
+                // Di chuyển thumbnail ảnh sang bên trái nếu có
+                const cardBody = card.querySelector('.card-body');
+                const thumb = card.querySelector('[data-role="grid-thumb"]');
+                if (thumb && cardBody) {
+                    thumb.style.display = 'none'; // Ẩn thumb trên ở list view
+                }
+                cardBody?.classList.add('d-flex', 'align-items-center', 'py-2');
+            } else {
+                card.style.height = '';
+                const cardBody = card.querySelector('.card-body');
+                const thumb = card.querySelector('[data-role="grid-thumb"]');
+                if (thumb) thumb.style.display = '';
+                cardBody?.classList.remove('d-flex', 'align-items-center', 'py-2');
+            }
+        }
     });
 }
+
+function initViewToggle() {
+    // Khởi tạo trạng thái ban đầu (grid)
+    setView('grid');
+}
+
 
 // =============================================
 // HELPERS
